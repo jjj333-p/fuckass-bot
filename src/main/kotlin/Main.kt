@@ -135,7 +135,11 @@ fun main() {
     halcyon.eventBus.register(MucEvents) {
         if (it is MucEvents.InvitationReceived) {
             println("Invitation received from ${it.invitation.sender} to ${it.invitation.roomjid}")
-            halcyon.modules[MUCModule::class].join(it.invitation.roomjid, "fart", it.invitation.password).send()
+            halcyon.modules[MUCModule::class].join(
+                roomJID = it.invitation.roomjid,
+                nickname = "fart",
+                password = it.invitation.password,
+            ).send()
         }
     }
 
@@ -143,6 +147,9 @@ fun main() {
     val monologueCounterMutex = Mutex()
 
     val onlineIndicator = ConcurrentHashMap<String, Boolean>()
+
+    // we're just keeping body to keep the memory footprint lighter, since we're only going to use body
+    val messageTracker = ConcurrentHashMap<String, String>()
 
     halcyon.eventBus.registerSuspend(MucRoomEvents, botScope) {
 
@@ -158,9 +165,49 @@ fun main() {
 
             is MucRoomEvents.ReceivedMessage -> {
 
+                // we only want to handle user messages
+                if (it.message.resourceOrEmpty == "") return@registerSuspend
+
+                // get stanza id
+                val stanzaID = it.message.getChildrenNS("stanza-id", "urn:xmpp:sid:0")?.attributes["id"]
+
+                // retractions require an id
+                if ( stanzaID != null ) {
+
+                    /*
+                     * Check if there is a retract id.
+                     * We don't care if its valid (i.e. they are trying to retract someone else's message
+                     * because we're just going to send a message that it happened.
+                     * If this message isnt a retraction, we add it to our list of messages that might get retracted
+                     */
+                    val retractELement = it.message.getChildrenNS("retract", "urn:xmpp:message-retract:1")
+                    val retractID = retractELement?.attributes?.get("id")
+                    if (retractID == null) {
+                        // generally if theres an id conflit youre only retracting the last one I think
+                        messageTracker[stanzaID] = it.message.body ?: ""
+                    } else {
+                        val bodyOfRetractedMessage = messageTracker[retractID]
+
+                        // make sure an item was found even if empty
+                        if (bodyOfRetractedMessage != null) {
+                            val formattedBody =
+                                if (bodyOfRetractedMessage == "")
+                                    "<No body present>"
+                                else
+                                    bodyOfRetractedMessage.split("\n").joinToString("\n> ", prefix = "> ")
+
+                            halcyon.request.message {
+                                to = it.room.roomJID
+                                body = "user ${it.message.resourceOrEmpty} attempted to retract the following message: \n$formattedBody"
+                                type = MessageType.Groupchat
+                            } .send()
+                        }
+                    }
+
+                }
+
                 // ignore empty/broken messages
                 if ((it.message.body ?: "") == "") return@registerSuspend
-                if (it.message.resourceOrEmpty == "") return@registerSuspend
 
                 monologueCounterMutex.withLock {
 
@@ -223,27 +270,33 @@ fun main() {
                         permanent = true
                         type = "Banned"
                     }
+
                     "321" -> {
                         permanent = true
                         type = "Affiliation revoked"
                     }
+
                     "322" -> {
                         permanent = true
                         type = "Room locked"
                     }
+
                     "307" -> {
                         permanent = true
                         type = "Kicked"
                     }
+
                     "332" -> {
                         permanent = false
                         type = "restart"
                         // TODO: check for destroy to see if permanent
                     }
+
                     null -> {
                         permanent = true
                         type = "Unknown"
                     }
+
                     else -> {
                         permanent = false
                         type = "Left"
