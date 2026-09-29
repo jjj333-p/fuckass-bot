@@ -31,6 +31,7 @@ import tigase.halcyon.core.eventbus.EventDefinition
 import tigase.halcyon.core.requests.RequestBuilder
 import tigase.halcyon.core.requests.modifyPresence
 import tigase.halcyon.core.xmpp.BareJID
+import tigase.halcyon.core.xmpp.FullJID
 import tigase.halcyon.core.xmpp.JID
 import tigase.halcyon.core.xmpp.bareJID
 import tigase.halcyon.core.xmpp.modules.MessageReceivedEvent
@@ -68,6 +69,16 @@ fun <T : Event> EventBus.registerSuspend(
 val Message.resourceOrEmpty: String
     get() = this.from?.resource ?: ""
 
+val Message.stanzaID: String?
+    get() = this.getChildrenNS("stanza-id", "urn:xmpp:sid:0")?.attributes["id"]
+
+val Message.replyToID: String?
+    get() = when (this.type) {
+        MessageType.Groupchat -> this.stanzaID
+        MessageType.Chat -> this.id
+        else -> null // idk if i can reply to all events
+    }
+
 fun String.toMessageType(): MessageType? = when (this) {
     "chat" -> MessageType.Chat
     "groupchat" -> MessageType.Groupchat
@@ -87,7 +98,13 @@ fun Halcyon.joinMucCustom(jid: BareJID, password: String?) {
     }.send()
 }
 
-fun Halcyon.prepareOOB(t: JID, ty: MessageType, url: String, description: String? = null, altBody: String? = null): RequestBuilder<Unit, Message>{
+fun Halcyon.prepareOOB(
+    t: JID,
+    ty: MessageType,
+    url: String,
+    description: String? = null,
+    altBody: String? = null
+): RequestBuilder<Unit, Message> {
     return this.request.message {
         to = t
         type = ty
@@ -108,13 +125,50 @@ fun Halcyon.prepareOOB(t: JID, ty: MessageType, url: String, description: String
     }
 }
 
+fun Halcyon.prepareReply(
+    t: JID,
+    ty: MessageType,
+    replyToJID: JID,
+    replyToID: String,
+    mainBody: String,
+    quote: String? = null,
+): RequestBuilder<Unit, Message> {
+
+    val fallbackTXT = quote?.split("\n")?.joinToString("\n> ", prefix = "> ", postfix = "\n")
+
+    return this.request.message {
+        to = t
+        type = ty
+        body = "${fallbackTXT ?: ""}\n$mainBody"
+
+        "reply" {
+            attributes["xmlns"] = "urn:xmpp:reply:0"
+            attributes["to"] = replyToJID.toString()
+            attributes["id"] = replyToID
+        }
+
+        if (fallbackTXT != null) {
+            "fallback" {
+                attributes["xmlns"] = "urn:xmpp:fallback:0"
+                attributes["for"] = "urn:xmpp:reply:0"
+
+                "body" {
+                    attributes["start"] = "0"
+                    attributes["end"] = fallbackTXT.length.toString()
+                }
+            }
+        }
+    }
+
+}
+
 suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: MessageType) {
 
     val res = httpClient.get("https://inspirobot.me/api?generate=true")
 
     val urlMaybe = res.bodyAsText()
 
-    halcyon.prepareOOB(t,ty, urlMaybe).send()
+    halcyon.prepareOOB(t, ty, urlMaybe).send()
 }
 
 @Serializable
@@ -132,7 +186,14 @@ data class XKCDData(
     val day: String,
 )
 
-suspend fun sendXKCD(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: MessageType, xkcdNum: Int? = null) {
+suspend fun sendXKCD(
+    halcyon: Halcyon,
+    httpClient: HttpClient,
+    t: JID,
+    originalMSG: Message,
+    ty: MessageType,
+    xkcdNum: Int? = null
+) {
     val url =
         if (xkcdNum == null) {
             "https://xkcd.com/info.0.json"
@@ -152,12 +213,26 @@ suspend fun sendXKCD(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: Messa
         else
             "<unknown month>"
 
-    halcyon.request.message {
-        to = t
-        type = ty
-        body =
-            "XKCD ${xkcdData.num} ($monthName ${xkcdData.day}, ${xkcdData.year}): *${xkcdData.safe_title}*\n> ${xkcdData.alt}\nhttps://xkcd.com/${xkcdData.num}"
-    }.send()
+    val replyToID = originalMSG.replyToID
+    val b = "XKCD ${xkcdData.num} ($monthName ${xkcdData.day}, ${xkcdData.year}): *${xkcdData.safe_title}*\n> ${xkcdData.alt}\nhttps://xkcd.com/${xkcdData.num}"
+    val msg =
+        if (replyToID == null) {
+            halcyon.request.message {
+                to = t
+                type = ty
+                body = b
+            }
+        } else {
+            halcyon.prepareReply(
+                t,
+                ty,
+                originalMSG.from!!,
+                replyToID,
+                b
+            )
+        }
+
+    msg.send()
 
     if (xkcdData.img == "") return
 
@@ -209,7 +284,23 @@ fun main() {
 
             val xkcdNum = xkcdNumStr?.toIntOrNull()
 
-            sendXKCD(halcyon, httpClient, j, it.stanza.type!!, xkcdNum)
+            sendXKCD(halcyon, httpClient, j, it.stanza, it.stanza.type!!, xkcdNum)
+        } else if (fucker.startsWith("!reply")) {
+
+            val replyToID = it.stanza.replyToID
+
+            if (replyToID != null) {
+                halcyon.prepareReply(
+                    j,
+                    it.stanza.type!!,
+                    it.stanza.from!!,
+                    replyToID = replyToID,
+                    "reply me daddy",
+                    "${it.stanza.from!!.resource}\n${it.stanza.body}"
+                ).send()
+
+            }
+
         }
     }
 
@@ -247,7 +338,7 @@ fun main() {
                 if (it.message.resourceOrEmpty == "") return@registerSuspend
 
                 // get stanza id
-                val stanzaID = it.message.getChildrenNS("stanza-id", "urn:xmpp:sid:0")?.attributes["id"]
+                val stanzaID = it.message.stanzaID
 
                 // retractions require an id
                 if (stanzaID != null) {
