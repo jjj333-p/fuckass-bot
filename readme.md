@@ -14,9 +14,15 @@ Put login details in `config.json` with the following structure:
 ```json
 {
   "jid": "user@server.tld",
-  "pass": "??????"
+  "pass": "??????",
+  "prejoin": [
+    "room@component.server.tld"
+  ]
 }
 ```
+
+Where `prejoin` is optional.
+
 ----
 
 ## What it do:

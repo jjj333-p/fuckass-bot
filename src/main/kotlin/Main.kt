@@ -41,6 +41,7 @@ import tigase.halcyon.core.xmpp.toBareJID
 data class Config(
     val jid: String,
     val pass: String,
+    val prejoin: List<String>?
 )
 
 // for some fuckass reason, Halcyon's eventbus doesn't support suspend lambdas
@@ -68,6 +69,17 @@ fun String.toMessageType(): MessageType? = when (this) {
     "headline" -> MessageType.Headline
     "normal" -> MessageType.Normal
     else -> null
+}
+
+fun Halcyon.joinMucCustom(jid: BareJID, password: String?) {
+    this.modules[MUCModule::class].join(
+        roomJID = jid,
+        nickname = "Fuckass Bot",
+        password = password,
+    ).modifyPresence {
+        status = "Running github.com/jjj333-p/fuckass-bot"
+//                show = Show.DnD
+    }.send()
 }
 
 suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: BareJID, ty: MessageType) {
@@ -136,14 +148,7 @@ fun main() {
     halcyon.eventBus.register(MucEvents) {
         if (it is MucEvents.InvitationReceived) {
             println("Invitation received from ${it.invitation.sender} to ${it.invitation.roomjid}")
-            halcyon.modules[MUCModule::class].join(
-                roomJID = it.invitation.roomjid,
-                nickname = "fart",
-                password = it.invitation.password,
-            ).modifyPresence {
-                status = "Running github.com/jjj333-p/fuckass-bot"
-//                show = Show.DnD
-            }.send()
+            halcyon.joinMucCustom(it.invitation.roomjid, it.invitation.password)
         }
     }
 
@@ -313,6 +318,15 @@ fun main() {
     }
 
     halcyon.connectAndWait()
+
+    if (config.prejoin != null) {
+        for (jidStr in config.prejoin) {
+            halcyon.joinMucCustom(
+                jidStr.toBareJID(),
+                null
+            )
+        }
+    }
 
     // waiting while client is connected
     // im not sure this needs to be here but it was in sample code
