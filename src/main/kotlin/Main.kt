@@ -27,6 +27,7 @@ import tigase.halcyon.core.eventbus.EventBus
 import tigase.halcyon.core.eventbus.EventDefinition
 import tigase.halcyon.core.requests.modifyPresence
 import tigase.halcyon.core.xmpp.BareJID
+import tigase.halcyon.core.xmpp.JID
 import tigase.halcyon.core.xmpp.bareJID
 import tigase.halcyon.core.xmpp.modules.MessageReceivedEvent
 import tigase.halcyon.core.xmpp.modules.muc.MUCModule
@@ -36,6 +37,9 @@ import tigase.halcyon.core.xmpp.resource
 import tigase.halcyon.core.xmpp.stanzas.Message
 import tigase.halcyon.core.xmpp.stanzas.MessageType
 import tigase.halcyon.core.xmpp.toBareJID
+import java.time.Month
+import java.time.format.TextStyle
+import java.util.Locale
 
 @Serializable
 data class Config(
@@ -48,13 +52,13 @@ data class Config(
 fun <T : Event> EventBus.registerSuspend(
     definition: EventDefinition<T>,
     scope: CoroutineScope,
-    action: suspend (T) -> Unit // The 'function color' magic happens here
+    action: suspend (T) -> Unit
 ) {
-    // 1. Call Halcyon's original, synchronous register method
+    // Call Halcyon's original, synchronous register method
     this.register(definition) { event ->
-        // 2. Instantly launch a coroutine for every event that fires
+        // launch a coroutine for every event that fires
         scope.launch {
-            // 3. Execute your suspend lambda inside the coroutine!
+            // Execute actual lambda
             action(event)
         }
     }
@@ -82,14 +86,13 @@ fun Halcyon.joinMucCustom(jid: BareJID, password: String?) {
     }.send()
 }
 
-suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: BareJID, ty: MessageType) {
+suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: MessageType) {
 
     val res = httpClient.get("https://inspirobot.me/api?generate=true")
 
     val urlMaybe = res.bodyAsText()
 
-
-    val msg = halcyon.request.message {
+    halcyon.request.message {
         to = t
         type = ty
         body = urlMaybe
@@ -104,11 +107,70 @@ suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: BareJID, ty
                 +"An optional description of the file"
             }
         }
-    }
+    }.send()
 
-    println("Sending message: $msg")
-    msg.send()
+}
 
+@Serializable
+data class XKCDData(
+    val month: String,
+    val num: Int,
+    val link: String,
+    val year: String,
+    val news: String,
+    val safe_title: String,
+    val transcript: String,
+    val alt: String,
+    val img: String,
+    val title: String,
+    val day: String,
+)
+
+suspend fun sendXKCD(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: MessageType, xkcdNum: Int? = null) {
+    val url =
+        if (xkcdNum == null) {
+            "https://xkcd.com/info.0.json"
+        } else {
+            "https://xkcd.com/${xkcdNum}/info.0.json"
+        }
+
+    val res = httpClient.get(url)
+
+    val xkcdDataStr = res.bodyAsText()
+
+    val xkcdData = Json.decodeFromString<XKCDData>(xkcdDataStr)
+
+    val monthName =
+        if (xkcdData.month != "")
+            Month.of(xkcdData.month.toInt()).getDisplayName(TextStyle.FULL, Locale.US)
+        else
+            "<unknown month>"
+
+    halcyon.request.message {
+        to = t
+        type = ty
+        body =
+            "XKCD ${xkcdData.num} ($monthName ${xkcdData.day}, ${xkcdData.year}): *${xkcdData.safe_title}*\n> ${xkcdData.alt}\nhttps://xkcd.com/${xkcdData.num}"
+    }.send()
+
+    if (xkcdData.img == "") return
+
+    halcyon.request.message {
+        to = t
+        type = ty
+        body = xkcdData.img
+
+        // Halcyon's XML DSL for appending the custom OOB element
+        "x" {
+            attributes["xmlns"] = "jabber:x:oob"
+            "url" {
+                +xkcdData.img
+            }
+            "desc" {
+                +"An optional description of the file"
+            }
+        }
+    }.send()
 }
 
 fun main() {
@@ -129,6 +191,17 @@ fun main() {
 
     halcyon.eventBus.registerSuspend(MessageReceivedEvent, botScope) {
         val fucker = it.stanza.body ?: ""
+        val bareJID = it.fromJID?.bareJID
+        val j =
+            if (bareJID != null && halcyon.modules[MUCModule::class].store.findRoom(bareJID) != null)
+                when (it.stanza.type) {
+                    MessageType.Groupchat -> bareJID
+                    MessageType.Chat -> it.fromJID!! // we just verified that it was non-null and had the bareJID property
+                    else -> return@registerSuspend
+                }
+            else
+                bareJID ?: return@registerSuspend
+
         if (fucker.startsWith("!echo")) {
 
             val trimmedfuck = fucker.removePrefix("!echo").trim()
@@ -139,8 +212,13 @@ fun main() {
                 type = it.stanza.type
             }.send()
         } else if (fucker.startsWith("!inspire")) {
-            val j = it.fromJID?.bareJID ?: return@registerSuspend
             sendInspire(halcyon, httpClient, j, it.stanza.type!!)
+        } else if (fucker.startsWith("!xkcd")) {
+            val xkcdNumStr = fucker.split(" ").getOrNull(1)
+
+            val xkcdNum = xkcdNumStr?.toIntOrNull()
+
+            sendXKCD(halcyon, httpClient, j, it.stanza.type!!, xkcdNum)
         }
     }
 
@@ -181,7 +259,7 @@ fun main() {
                 val stanzaID = it.message.getChildrenNS("stanza-id", "urn:xmpp:sid:0")?.attributes["id"]
 
                 // retractions require an id
-                if ( stanzaID != null ) {
+                if (stanzaID != null) {
 
                     /*
                      * Check if there is a retract id.
@@ -207,9 +285,10 @@ fun main() {
 
                             halcyon.request.message {
                                 to = it.room.roomJID
-                                body = "user ${it.message.resourceOrEmpty} attempted to retract the following message: \n$formattedBody"
+                                body =
+                                    "user ${it.message.resourceOrEmpty} attempted to retract the following message: \n$formattedBody"
                                 type = MessageType.Groupchat
-                            } .send()
+                            }.send()
                         }
                     }
 

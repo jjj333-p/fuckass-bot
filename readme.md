@@ -31,4 +31,8 @@ Where `prejoin` is optional.
 
 ----
 
+![xkcd demo](https://dl.4d2.sh/Sr5kHxWGFhSF.png)
+
+----
+
 ![wbbbb demo](https://dl.4d2.sh/hZS74ZxWyec8.png)
