@@ -17,6 +17,9 @@ import kotlinx.serialization.Serializable
 // java stdlib
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.time.Month
+import java.time.format.TextStyle
+import java.util.Locale
 
 // halcyon
 import tigase.halcyon.core.AbstractHalcyon
@@ -25,6 +28,7 @@ import tigase.halcyon.core.builder.createHalcyon
 import tigase.halcyon.core.eventbus.Event
 import tigase.halcyon.core.eventbus.EventBus
 import tigase.halcyon.core.eventbus.EventDefinition
+import tigase.halcyon.core.requests.RequestBuilder
 import tigase.halcyon.core.requests.modifyPresence
 import tigase.halcyon.core.xmpp.BareJID
 import tigase.halcyon.core.xmpp.JID
@@ -37,9 +41,6 @@ import tigase.halcyon.core.xmpp.resource
 import tigase.halcyon.core.xmpp.stanzas.Message
 import tigase.halcyon.core.xmpp.stanzas.MessageType
 import tigase.halcyon.core.xmpp.toBareJID
-import java.time.Month
-import java.time.format.TextStyle
-import java.util.Locale
 
 @Serializable
 data class Config(
@@ -86,29 +87,34 @@ fun Halcyon.joinMucCustom(jid: BareJID, password: String?) {
     }.send()
 }
 
+fun Halcyon.prepareOOB(t: JID, ty: MessageType, url: String, description: String? = null, altBody: String? = null): RequestBuilder<Unit, Message>{
+    return this.request.message {
+        to = t
+        type = ty
+        body = altBody ?: url
+
+        // Halcyon's XML DSL for appending the custom OOB element
+        "x" {
+            attributes["xmlns"] = "jabber:x:oob"
+            "url" {
+                +url
+            }
+            if (description != null) {
+                "desc" {
+                    +description
+                }
+            }
+        }
+    }
+}
+
 suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: MessageType) {
 
     val res = httpClient.get("https://inspirobot.me/api?generate=true")
 
     val urlMaybe = res.bodyAsText()
 
-    halcyon.request.message {
-        to = t
-        type = ty
-        body = urlMaybe
-
-        // Halcyon's XML DSL for appending the custom OOB element
-        "x" {
-            attributes["xmlns"] = "jabber:x:oob"
-            "url" {
-                +urlMaybe
-            }
-            "desc" {
-                +"An optional description of the file"
-            }
-        }
-    }.send()
-
+    halcyon.prepareOOB(t,ty, urlMaybe).send()
 }
 
 @Serializable
@@ -155,22 +161,7 @@ suspend fun sendXKCD(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: Messa
 
     if (xkcdData.img == "") return
 
-    halcyon.request.message {
-        to = t
-        type = ty
-        body = xkcdData.img
-
-        // Halcyon's XML DSL for appending the custom OOB element
-        "x" {
-            attributes["xmlns"] = "jabber:x:oob"
-            "url" {
-                +xkcdData.img
-            }
-            "desc" {
-                +"An optional description of the file"
-            }
-        }
-    }.send()
+    halcyon.prepareOOB(t, ty, xkcdData.img, description = xkcdData.transcript).send()
 }
 
 fun main() {
