@@ -25,6 +25,7 @@ import tigase.halcyon.core.builder.createHalcyon
 import tigase.halcyon.core.eventbus.Event
 import tigase.halcyon.core.eventbus.EventBus
 import tigase.halcyon.core.eventbus.EventDefinition
+import tigase.halcyon.core.requests.modifyPresence
 import tigase.halcyon.core.xmpp.BareJID
 import tigase.halcyon.core.xmpp.bareJID
 import tigase.halcyon.core.xmpp.modules.MessageReceivedEvent
@@ -139,7 +140,10 @@ fun main() {
                 roomJID = it.invitation.roomjid,
                 nickname = "fart",
                 password = it.invitation.password,
-            ).send()
+            ).modifyPresence {
+                status = "Running github.com/jjj333-p/fuckass-bot"
+//                show = Show.DnD
+            }.send()
         }
     }
 
