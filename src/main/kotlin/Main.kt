@@ -32,7 +32,6 @@ import tigase.halcyon.core.requests.RequestBuilder
 import tigase.halcyon.core.requests.modifyMessage
 import tigase.halcyon.core.requests.modifyPresence
 import tigase.halcyon.core.xmpp.BareJID
-import tigase.halcyon.core.xmpp.FullJID
 import tigase.halcyon.core.xmpp.JID
 import tigase.halcyon.core.xmpp.bareJID
 import tigase.halcyon.core.xmpp.modules.MessageReceivedEvent
@@ -101,14 +100,9 @@ fun Halcyon.joinMucCustom(jid: BareJID, password: String?) {
 
 fun RequestBuilder<Unit, Message>.addOOB(url: String, description: String?): RequestBuilder<Unit, Message> {
     return this.modifyMessage {
-        val preBodylen = body?.length ?: 0
+        val preBodyLen = body?.length ?: 0
 
-        body =
-            if (body == null) {
-                url + '\n'
-            } else {
-                "$body\n$url\n"
-            }
+        body = (body ?: "") + url
 
         val postBodyLen = body!!.length
 
@@ -129,7 +123,7 @@ fun RequestBuilder<Unit, Message>.addOOB(url: String, description: String?): Req
             attributes["for"] = "jabber:x:oob"
 
             "body" {
-                attributes["start"] = preBodylen.toString()
+                attributes["start"] = preBodyLen.toString()
                 attributes["end"] = postBodyLen.toString()
             }
         }
