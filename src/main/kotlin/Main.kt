@@ -29,6 +29,7 @@ import tigase.halcyon.core.eventbus.Event
 import tigase.halcyon.core.eventbus.EventBus
 import tigase.halcyon.core.eventbus.EventDefinition
 import tigase.halcyon.core.requests.RequestBuilder
+import tigase.halcyon.core.requests.modifyMessage
 import tigase.halcyon.core.requests.modifyPresence
 import tigase.halcyon.core.xmpp.BareJID
 import tigase.halcyon.core.xmpp.FullJID
@@ -98,19 +99,19 @@ fun Halcyon.joinMucCustom(jid: BareJID, password: String?) {
     }.send()
 }
 
-fun Halcyon.prepareOOB(
-    t: JID,
-    ty: MessageType,
-    url: String,
-    description: String? = null,
-    altBody: String? = null
-): RequestBuilder<Unit, Message> {
-    return this.request.message {
-        to = t
-        type = ty
-        body = altBody ?: url
+fun RequestBuilder<Unit, Message>.addOOB(url: String, description: String?): RequestBuilder<Unit, Message> {
+    return this.modifyMessage {
+        val preBodylen = body?.length ?: 0
 
-        // Halcyon's XML DSL for appending the custom OOB element
+        body =
+            if (body == null) {
+                url + '\n'
+            } else {
+                "$body\n$url\n"
+            }
+
+        val postBodyLen = body!!.length
+
         "x" {
             attributes["xmlns"] = "jabber:x:oob"
             "url" {
@@ -122,7 +123,31 @@ fun Halcyon.prepareOOB(
                 }
             }
         }
+
+        "fallback" {
+            attributes["xmlns"] = "urn:xmpp:fallback:0"
+            attributes["for"] = "jabber:x:oob"
+
+            "body" {
+                attributes["start"] = preBodylen.toString()
+                attributes["end"] = postBodyLen.toString()
+            }
+        }
     }
+}
+
+fun Halcyon.prepareOOB(
+    t: JID,
+    ty: MessageType,
+    url: String,
+    description: String? = null,
+    altBody: String? = null
+): RequestBuilder<Unit, Message> {
+    return this.request.message {
+        to = t
+        type = ty
+        body = altBody
+    }.addOOB(url, description)
 }
 
 fun Halcyon.prepareReply(
@@ -162,13 +187,16 @@ fun Halcyon.prepareReply(
 
 }
 
-suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: MessageType) {
+suspend fun sendInspire(halcyon: Halcyon, httpClient: HttpClient, t: JID, ty: MessageType, cmdMsg: Message) {
 
     val res = httpClient.get("https://inspirobot.me/api?generate=true")
 
     val urlMaybe = res.bodyAsText()
 
-    halcyon.prepareOOB(t, ty, urlMaybe).send()
+    halcyon
+        .prepareReply(t, ty, cmdMsg.from!!, cmdMsg.replyToID!!, "", cmdMsg.body)
+        .addOOB(urlMaybe, "inspiration")
+        .send()
 }
 
 @Serializable
@@ -278,7 +306,7 @@ fun main() {
                 type = it.stanza.type
             }.send()
         } else if (fucker.startsWith("!inspire")) {
-            sendInspire(halcyon, httpClient, j, it.stanza.type!!)
+            sendInspire(halcyon, httpClient, j, it.stanza.type!!, it.stanza)
         } else if (fucker.startsWith("!xkcd")) {
             val xkcdNumStr = fucker.split(" ").getOrNull(1)
 
@@ -388,7 +416,7 @@ fun main() {
 
                     if (prev == it.message.resourceOrEmpty) {
                         if (count >= 10) {
-                            sendInspire(halcyon, httpClient, it.room.roomJID, MessageType.Groupchat)
+                            sendInspire(halcyon, httpClient, it.room.roomJID, MessageType.Groupchat, it.message)
 
                             // so when we add one later its up to 0
                             count = -1
