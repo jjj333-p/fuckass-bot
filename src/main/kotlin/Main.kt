@@ -158,7 +158,7 @@ fun Halcyon.prepareReply(
     return this.request.message {
         to = t
         type = ty
-        body = "${fallbackTXT ?: ""}\n$mainBody"
+        body = "${fallbackTXT ?: ""}$mainBody"
 
         "reply" {
             attributes["xmlns"] = "urn:xmpp:reply:0"
