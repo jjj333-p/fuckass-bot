@@ -343,6 +343,11 @@ fun main() {
     // we're just keeping body to keep the memory footprint lighter, since we're only going to use body
     val messageTracker = ConcurrentHashMap<String, String>()
 
+    val nickHistory = ConcurrentHashMap<String, MutableSet<String>>()
+    val jidHistory = ConcurrentHashMap<String, MutableSet<String>>()
+    // true for moderator
+    val knownRole = ConcurrentHashMap<String, Boolean>()
+
     halcyon.eventBus.registerSuspend(MucRoomEvents, botScope) {
 
         val rJIDstr = it.room.roomJID.toString()
@@ -402,6 +407,25 @@ fun main() {
                 // ignore empty/broken messages
                 if ((it.message.body ?: "") == "") return@registerSuspend
 
+                val cmdReplyJID =
+                    if (it.message.type == MessageType.Groupchat)
+                        it.room.roomJID
+                    else
+                        it.message.from!!
+
+                if (it.message.body!!.startsWith("!nick ")) {
+                    val searchNick = it.message.body!!.removePrefix("!nick ")
+                    val thisHistory = nickHistory[searchNick]
+                    halcyon.prepareReply(
+                        cmdReplyJID,
+                        it.message.type!!,
+                        it.message.from!!,
+                        it.message.replyToID!!,
+                        thisHistory?.joinToString("\n") ?: "No history found.",
+                        it.message.body
+                    ).send()
+                }
+
                 monologueCounterMutex.withLock {
 
                     // get previous values
@@ -441,7 +465,14 @@ fun main() {
                         ?.attributes
 
                 val role = itemAtributes?.get("role") ?: "<Unknown Role>"
-                val realJID = itemAtributes?.get("jid") ?: "<UnknownJID>"
+                val realJID = itemAtributes?.get("jid")?.toBareJID()
+                val nick = it.presence.from!!.resource!!
+
+                if (realJID != null) {
+                    nickHistory.getOrPut(nick) { mutableSetOf() }.add(realJID.toString())
+                    jidHistory.getOrPut(realJID.toString()) { mutableSetOf() }.add(nick)
+                    knownRole[nick] = (role == "moderator")
+                }
 
                 println("Occupant came ${it.presence.from} (role = $role, realJID = $realJID)")
 //              halcyon.modules[MUCModule::class].message(it.room, "${it.nickname} wbbbbbbb").send()
@@ -456,7 +487,10 @@ fun main() {
                         ?.attributes
 
                 val role = itemAtributes?.get("role") ?: "<Unknown Role>"
-                val realJID = itemAtributes?.get("jid") ?: "<UnknownJID>"
+                val realJID = itemAtributes?.get("jid")?.toBareJID()
+                val nick = it.presence.from!!.resource!!
+
+                knownRole[nick] = (role == "moderator")
 
                 println("Occupant changed ${it.presence.from} (role = $role, realJID = $realJID)")
             }
