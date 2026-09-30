@@ -236,7 +236,8 @@ suspend fun sendXKCD(
             "<unknown month>"
 
     val replyToID = originalMSG.replyToID
-    val b = "XKCD ${xkcdData.num} ($monthName ${xkcdData.day}, ${xkcdData.year}): *${xkcdData.safe_title}*\n> ${xkcdData.alt}\nhttps://xkcd.com/${xkcdData.num}"
+    val b =
+        "XKCD ${xkcdData.num} ($monthName ${xkcdData.day}, ${xkcdData.year}): *${xkcdData.safe_title}*\n> ${xkcdData.alt}\nhttps://xkcd.com/${xkcdData.num}"
     val msg =
         if (replyToID == null) {
             halcyon.request.message {
@@ -406,7 +407,7 @@ fun main() {
                     // get previous values
                     var (prev, count) = monologueCounter[rJIDstr] ?: Pair("", 0)
 
-                    println("processing for ${it.message.resourceOrEmpty} against $prev")
+//                    println("processing for ${it.message.resourceOrEmpty} against $prev")
 
                     if (prev == it.message.resourceOrEmpty) {
                         if (count >= 10) {
@@ -418,10 +419,10 @@ fun main() {
 
                         monologueCounter[rJIDstr] = Pair(prev, count + 1)
 
-                        println("Monologue counter: $prev -> $count")
+//                        println("Monologue counter: $prev -> $count")
                     } else {
                         monologueCounter[rJIDstr] = Pair(it.message.resourceOrEmpty, 1)
-                        println("Initialized monologue counter for ${it.message.resourceOrEmpty}")
+//                        println("Initialized monologue counter for ${it.message.resourceOrEmpty}")
                     }
                 }
             }
@@ -433,11 +434,31 @@ fun main() {
             }
 
             is MucRoomEvents.OccupantCame -> {
-                if (onlineIndicator[rJIDstr] ?: false)
-                    halcyon.modules[MUCModule::class].message(it.room, "${it.nickname} wbbbbbbb").send()
+                val itemAtributes =
+                    it.presence
+                        .getChildrenNS("x", "http://jabber.org/protocol/muc#user")
+                        ?.getFirstChild("item")
+                        ?.attributes
+
+                val role = itemAtributes?.get("role") ?: "<Unknown Role>"
+                val realJID = itemAtributes?.get("jid") ?: "<UnknownJID>"
+
+                println("Occupant came ${it.presence.from} (role = $role, realJID = $realJID)")
+//              halcyon.modules[MUCModule::class].message(it.room, "${it.nickname} wbbbbbbb").send()
+
             }
 
             is MucRoomEvents.OccupantChangedPresence -> { /* TODO */
+                val itemAtributes =
+                    it.presence
+                        .getChildrenNS("x", "http://jabber.org/protocol/muc#user")
+                        ?.getFirstChild("item")
+                        ?.attributes
+
+                val role = itemAtributes?.get("role") ?: "<Unknown Role>"
+                val realJID = itemAtributes?.get("jid") ?: "<UnknownJID>"
+
+                println("Occupant changed ${it.presence.from} (role = $role, realJID = $realJID)")
             }
 
             is MucRoomEvents.OccupantLeave -> { /* TODO */
